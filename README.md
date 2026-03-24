@@ -1,47 +1,47 @@
-# Command line tool for automating customization and configuration of handhelds & PCs running SteamOS
+# Command-line tool for automating the customization and configuration of handhelds and PCs running SteamOS
 
-> **Fork** di [InnoVision-Games/SteamOS-Utils](https://github.com/InnoVision-Games/SteamOS-Utils)  
-> **Modifiche**: rimozione della whitelist statica delle versioni kernel, sostituita con rilevamento dinamico e verifica live sul mirror ufficiale Valve.
+> **Fork** of [InnoVision-Games/SteamOS-Utils](https://github.com/InnoVision-Games/SteamOS-Utils) 
+> **Changes**: Removal of the static whitelist of kernel versions, replaced with dynamic detection and live verification on the official Valve mirror.
 
 ---
 
-## Differenze rispetto all'originale
+## Differences from the original
 
-Il problema principale dell'implementazione originale era una **whitelist statica** delle versioni kernel supportate.
-Dopo ogni aggiornamento di SteamOS, il kernel veniva aggiornato e lo script usciva con:
+The main issue with the original implementation was a **static whitelist** of supported kernel versions.
+After every SteamOS update, the kernel would be updated and the script would exit with:
 
 ```
 Attempting to install on an unsupported SteamOS version, now exiting!
 ```
 
-Questa fork risolve il problema in modo permanente:
+This fork permanently resolves the issue:
 
-| Comportamento | Originale | Questa fork |
+| Behavior | Original | This fork |
 |---|---|---|
-| Versioni supportate | Whitelist statica hardcoded | Qualsiasi versione con pacchetti su mirror Valve |
-| Verifica disponibilità pacchetti | No | Sì, controllo live sul mirror |
-| Verifica se già installato | No | Sì, controlla `lsmod` prima di procedere |
-| Messaggio di errore | Generico "unsupported version" | Indica il pacchetto mancante e il motivo |
+| Supported versions | Hardcoded static whitelist | Any version with packages on the Valve mirror |
+| Check package availability | No | Yes, live check on the mirror |
+| Check if already installed | No | Yes, checks `lsmod` before proceeding |
+| Error message | Generic “unsupported version” | Indicates the missing package and the reason |
 
 ---
 
-## Enabling Linux Dynamic Kernel Module Support ACPI calls
+## Enabling Linux Dynamic Kernel Module Support (DKMS) ACPI calls
 
-In order to enable custom fan curves and setting the Legion Go charge limit we need to enable
+In order to enable custom fan curves and set the Legion Go charge limit, we need to enable
 DKMS ACPI call support for SteamOS.
 
-In order to enable the ACPI calls the following needs to happen:
+To enable ACPI calls, the following steps must be taken:
 
 - Disable SteamOS read-only mode
 - Automatically detect the current kernel version
-- Check live on the official Valve mirror if the required packages exist
+- Check in real-time on the official Valve mirror if the required packages exist
 - Download and install the required kernel modules and kernel header packages
 - Install the packages that enable the various daemons required for ACPI calls
 - Re-enable SteamOS read-only mode
 
 This script automates all of the above with a single command.
 
-### Installazione
+### Installation
 
 ```bash
 git clone https://github.com/mrsasy89/SteamOS-Utils.git
@@ -51,9 +51,9 @@ cd SteamOS-Utils
 
 The command will take several minutes to run depending on your internet connection.
 
-### Output atteso
+### Expected Output
 
-Lo script mostrerà i seguenti step:
+The script will display the following steps:
 
 ```
 Step 1: Checking if acpi_call is already active...
@@ -67,9 +67,9 @@ Congratulations! ACPI calls enabled. You can now use custom fan curves and charg
 Please reboot your device to complete the installation.
 ```
 
-### Se i pacchetti non sono ancora disponibili
+### If the packages are not yet available
 
-Se Valve non ha ancora pubblicato i pacchetti per il kernel corrente, lo script mostrerà:
+If Valve has not yet released the packages for the current kernel, the script will display:
 
 ```
 ERROR: Kernel modules package not found on Valve mirror.
@@ -77,17 +77,17 @@ Package needed: linux-neptune-XXX-X.XX.XX.valveXX-X-x86_64.pkg.tar.zst
 This SteamOS version may not yet be supported. Please check later or open an issue.
 ```
 
-In questo caso attendere che Valve pubblichi i pacchetti sul mirror e riprovare.
+In this case, wait for Valve to release the packages on the mirror and try again.
 
-### Verifica installazione
+### Verify installation
 
-Dopo il riavvio, verificare che il modulo sia attivo:
+After rebooting, verify that the module is active:
 
 ```bash
 dkms status
 ```
 
-Output atteso:
+Expected output:
 
 ```
 acpi_call/1.2.2, 6.16.12-valve13-1-neptune-616-g324b4c971758, x86_64: installed
@@ -97,7 +97,7 @@ acpi_call/1.2.2, 6.16.12-valve13-1-neptune-616-g324b4c971758, x86_64: installed
 lsmod | grep acpi_call
 ```
 
-### Check stato ACPI calls
+### Check ACPI calls status
 
 ```bash
 ./SteamOsUtils.py --check_dkms_acpi_calls_enabled
@@ -105,17 +105,17 @@ lsmod | grep acpi_call
 
 ---
 
-## Compatibilità testata
+## Tested compatibility
 
-| Kernel | Versione Valve | SteamOS | Stato |
+| Kernel | Valve Version | SteamOS | Status |
 |---|---|---|---|
-| 6.11.11 | valve27-1 | 3.7.x | ✅ Testato |
-| 6.16.12 | valve13-1 | 3.8.x | ✅ Testato |
+| 6.11.11 | valve27-1 | 3.7.x | ✅ Tested |
+| 6.16.12 | valve13-1 | 3.8.x | ✅ Tested |
 
 ---
 
-## Note
+## Notes
 
-- Lo script è pensato per **Lenovo Legion Go** su SteamOS ma può funzionare su qualsiasi handheld con kernel Neptune.
-- Dopo ogni aggiornamento SteamOS è necessario rieseguire lo script poiché il filesystem viene riscritto.
-- I pacchetti kernel vengono eliminati automaticamente dopo l'installazione.
+- The script is designed for the **Lenovo Legion Go** on SteamOS but can work on any handheld device with the Neptune kernel.
+- After every SteamOS update, you must rerun the script because the filesystem is rewritten.
+- The kernel packages are automatically removed after installation.
