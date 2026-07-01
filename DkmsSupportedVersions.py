@@ -26,6 +26,9 @@
     Modifications (c) 2026 mrsasy89
     CHANGES: replaced static version whitelist with dynamic kernel detection
     and live package availability check against the official Valve mirror.
+    CHANGES: replaced hardcoded jupiter-main repo with dynamic discovery
+    of all jupiter-* repos on the Valve mirror root, so the correct
+    versioned repo (e.g. jupiter-3.8.1x) is always found automatically.
 '''
 
 import os
@@ -34,12 +37,56 @@ import sys
 import urllib.request
 import re
 
-VALVE_MIRROR_BASE = 'https://steamdeck-packages.steamos.cloud/archlinux-mirror/jupiter-main/os/x86_64/'
-REMOTE_PATH = 'jupiter-main/os/x86_64/'
+VALVE_MIRROR_ROOT = 'https://steamdeck-packages.steamos.cloud/archlinux-mirror/'
 
 dkms_acpi_enabled_strings = [
     'acpi_call',
 ]
+
+def discover_valve_repo(filename):
+    """
+    Scans the Valve mirror root for all jupiter-* repos and returns
+    the base URL and remote path of the first repo that contains the
+    requested package filename. Falls back to jupiter-main if none found.
+    """
+    print('\nDiscovering Valve repos for package: %s ...' % filename)
+    try:
+        req = urllib.request.urlopen(VALVE_MIRROR_ROOT, timeout=10)
+        html = req.read().decode('utf-8')
+        # Find all jupiter-* repo directory names
+        repos = re.findall(r'href="(jupiter-[^/"]+)/?"', html)
+        # Deduplicate while preserving order, prefer versioned repos over jupiter-main
+        seen = set()
+        ordered_repos = []
+        for r in repos:
+            if r not in seen:
+                seen.add(r)
+                if r != 'jupiter-main':
+                    ordered_repos.append(r)
+        # Append jupiter-main as last fallback
+        if 'jupiter-main' in seen:
+            ordered_repos.append('jupiter-main')
+        print('  -> Found repos: %s' % ordered_repos)
+    except Exception as e:
+        print('  -> Error scanning mirror root: %s' % str(e))
+        ordered_repos = ['jupiter-main']
+
+    for repo in ordered_repos:
+        base_url = '%s%s/os/x86_64/' % (VALVE_MIRROR_ROOT, repo)
+        remote_path = '%s/os/x86_64/' % repo
+        try:
+            req = urllib.request.urlopen(base_url, timeout=10)
+            html = req.read().decode('utf-8')
+            if filename in html:
+                print('  -> Package found in repo: %s' % repo)
+                return base_url, remote_path
+            else:
+                print('  -> Not in repo: %s' % repo)
+        except Exception as e:
+            print('  -> Error checking repo %s: %s' % (repo, str(e)))
+
+    print('  -> Package not found in any repo.')
+    return None, None
 
 def get_os_version():
     temp = platform.release()
@@ -89,33 +136,30 @@ def get_kernel_headers_filename(os_version):
 
 def check_package_exists_on_mirror(filename):
     """
-    Dynamically checks if a package filename exists on the official Valve mirror.
-    Returns True if found, False otherwise.
+    Dynamically discovers the correct Valve repo and checks if the
+    package exists. Returns (True, base_url, remote_path) if found,
+    (False, None, None) otherwise.
     """
     print('\nChecking Valve mirror for package: %s ...' % filename)
-    try:
-        url = VALVE_MIRROR_BASE
-        req = urllib.request.urlopen(url, timeout=10)
-        html = req.read().decode('utf-8')
-        if filename in html:
-            print('  -> Package found on mirror!')
-            return True
-        else:
-            print('  -> Package NOT found on mirror.')
-            return False
-    except Exception as e:
-        print('  -> Error checking mirror: %s' % str(e))
-        return False
+    base_url, remote_path = discover_valve_repo(filename)
+    if base_url is not None:
+        print('  -> Package found on mirror!')
+        return True, base_url, remote_path
+    else:
+        print('  -> Package NOT found on mirror.')
+        return False, None, None
 
-def get_remote_kernel_modules_path(kernel_modules_filename):
+def get_remote_kernel_modules_path(kernel_modules_filename, remote_path=None):
     print('\nNow generating remote path for: %s ...' % kernel_modules_filename)
-    remote_filename = os.path.join(REMOTE_PATH, kernel_modules_filename)
+    rpath = remote_path if remote_path else 'jupiter-main/os/x86_64/'
+    remote_filename = os.path.join(rpath, kernel_modules_filename)
     print('Generated remote filename: %s.' % remote_filename)
     return remote_filename
 
-def get_remote_kernel_headers_path(kernel_headers_filename):
+def get_remote_kernel_headers_path(kernel_headers_filename, remote_path=None):
     print('\nNow generating remote path for: %s ...' % kernel_headers_filename)
-    remote_filename = os.path.join(REMOTE_PATH, kernel_headers_filename)
+    rpath = remote_path if remote_path else 'jupiter-main/os/x86_64/'
+    remote_filename = os.path.join(rpath, kernel_headers_filename)
     print('Generated remote filename: %s.' % remote_filename)
     return remote_filename
 
