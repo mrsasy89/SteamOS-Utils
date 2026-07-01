@@ -26,9 +26,10 @@
     Modifications (c) 2026 mrsasy89
     CHANGES: replaced static version whitelist with dynamic kernel detection
     and live package availability check against the official Valve mirror.
-    CHANGES: replaced hardcoded jupiter-main repo with dynamic discovery
-    of all jupiter-* repos on the Valve mirror root, so the correct
-    versioned repo (e.g. jupiter-3.8.1x) is always found automatically.
+    CHANGES: dynamic repo discovery across all jupiter-* repos.
+    CHANGES: search starts from the current stable repo (detected from
+    pacman mirrorlist or DB files), then other versioned repos sorted
+    descending, then jupiter-main as last fallback.
 '''
 
 import os
@@ -36,6 +37,7 @@ import platform
 import sys
 import urllib.request
 import re
+import glob
 
 VALVE_MIRROR_ROOT = 'https://steamdeck-packages.steamos.cloud/archlinux-mirror/'
 
@@ -43,33 +45,81 @@ dkms_acpi_enabled_strings = [
     'acpi_call',
 ]
 
+def detect_current_stable_repo():
+    """
+    Detects the current stable repo name used by pacman.
+    Strategy 1: parse /etc/pacman.d/mirrorlist for a jupiter-* entry.
+    Strategy 2: scan /var/lib/pacman/sync/ for jupiter-*.db files.
+    Returns a repo name like 'jupiter-3.8.1x' or None if not detected.
+    """
+    # Strategy 1: mirrorlist
+    mirrorlist_path = '/etc/pacman.d/mirrorlist'
+    try:
+        with open(mirrorlist_path, 'r') as f:
+            content = f.read()
+        matches = re.findall(r'archlinux-mirror/(jupiter-[^/]+)/os/', content)
+        for m in matches:
+            if m != 'jupiter-main':
+                print('  -> Detected stable repo from mirrorlist: %s' % m)
+                return m
+    except Exception:
+        pass
+
+    # Strategy 2: pacman sync db files
+    try:
+        db_files = glob.glob('/var/lib/pacman/sync/jupiter-*.db')
+        for db in db_files:
+            name = os.path.basename(db).replace('.db', '')
+            if name != 'jupiter-main':
+                print('  -> Detected stable repo from pacman db: %s' % name)
+                return name
+    except Exception:
+        pass
+
+    print('  -> Could not detect stable repo, will scan all.')
+    return None
+
 def discover_valve_repo(filename):
     """
-    Scans the Valve mirror root for all jupiter-* repos and returns
-    the base URL and remote path of the first repo that contains the
-    requested package filename. Falls back to jupiter-main if none found.
+    Searches for the package across Valve repos in this order:
+      1. Current stable repo (detected from the running system)
+      2. Other versioned jupiter-* repos, sorted descending (newest first)
+      3. jupiter-main as last fallback
+    Returns (base_url, remote_path) if found, (None, None) otherwise.
     """
     print('\nDiscovering Valve repos for package: %s ...' % filename)
+
+    # Detect the stable repo first
+    stable_repo = detect_current_stable_repo()
+
+    # Fetch all available repos from the mirror root
     try:
         req = urllib.request.urlopen(VALVE_MIRROR_ROOT, timeout=10)
         html = req.read().decode('utf-8')
-        # Find all jupiter-* repo directory names
-        repos = re.findall(r'href="(jupiter-[^/"]+)/?"', html)
-        # Deduplicate while preserving order, prefer versioned repos over jupiter-main
-        seen = set()
-        ordered_repos = []
-        for r in repos:
-            if r not in seen:
-                seen.add(r)
-                if r != 'jupiter-main':
-                    ordered_repos.append(r)
-        # Append jupiter-main as last fallback
-        if 'jupiter-main' in seen:
-            ordered_repos.append('jupiter-main')
-        print('  -> Found repos: %s' % ordered_repos)
+        all_repos = re.findall(r'href="(jupiter-[^/"]+)/?"', html)
+        all_repos = list(dict.fromkeys(all_repos))  # deduplicate, preserve order
     except Exception as e:
         print('  -> Error scanning mirror root: %s' % str(e))
+        all_repos = []
+
+    # Build ordered search list:
+    # 1. stable repo first (if detected and present)
+    # 2. other versioned repos sorted descending (newest first), excluding main
+    # 3. jupiter-main last
+    versioned = sorted(
+        [r for r in all_repos if r != 'jupiter-main' and r != stable_repo],
+        reverse=True
+    )
+    ordered_repos = []
+    if stable_repo:
+        ordered_repos.append(stable_repo)
+    ordered_repos.extend(versioned)
+    if 'jupiter-main' in all_repos:
+        ordered_repos.append('jupiter-main')
+    elif not ordered_repos:
         ordered_repos = ['jupiter-main']
+
+    print('  -> Search order: %s' % ordered_repos)
 
     for repo in ordered_repos:
         base_url = '%s%s/os/x86_64/' % (VALVE_MIRROR_ROOT, repo)
@@ -137,8 +187,9 @@ def get_kernel_headers_filename(os_version):
 def check_package_exists_on_mirror(filename):
     """
     Dynamically discovers the correct Valve repo and checks if the
-    package exists. Returns (True, base_url, remote_path) if found,
-    (False, None, None) otherwise.
+    package exists.
+    Returns (True, base_url, remote_path) if found,
+            (False, None, None) otherwise.
     """
     print('\nChecking Valve mirror for package: %s ...' % filename)
     base_url, remote_path = discover_valve_repo(filename)

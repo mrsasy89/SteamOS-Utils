@@ -26,6 +26,8 @@
     Modifications (c) 2026 mrsasy89
     CHANGES: replaced static whitelist check with dynamic Valve mirror check.
     Now supports any kernel version as long as packages exist on the mirror.
+    CHANGES: updated to unpack (bool, base_url, remote_path) tuple from
+    check_package_exists_on_mirror() and pass remote_path downstream.
 '''
 
 import sys
@@ -114,15 +116,17 @@ def enable_acpi_calls(dry_run):
     kernel_modules_filename = get_kernel_modules_filename(os_version)
     kernel_headers_filename = get_kernel_headers_filename(os_version)
 
-    # 3. Check if packages exist on Valve mirror
+    # 3. Check if packages exist on Valve mirror (search starts from stable repo)
     print('\nStep 3: Checking package availability on Valve mirror...')
-    if not check_package_exists_on_mirror(kernel_modules_filename):
+    found_modules, base_url_modules, remote_path_modules = check_package_exists_on_mirror(kernel_modules_filename)
+    if not found_modules:
         print('\nERROR: Kernel modules package not found on Valve mirror.')
         print('Package needed: %s' % kernel_modules_filename)
         print('This SteamOS version may not yet be supported. Please check later or open an issue.')
         sys.exit(-1)
 
-    if not check_package_exists_on_mirror(kernel_headers_filename):
+    found_headers, base_url_headers, remote_path_headers = check_package_exists_on_mirror(kernel_headers_filename)
+    if not found_headers:
         print('\nERROR: Kernel headers package not found on Valve mirror.')
         print('Package needed: %s' % kernel_headers_filename)
         print('This SteamOS version may not yet be supported. Please check later or open an issue.')
@@ -130,9 +134,9 @@ def enable_acpi_calls(dry_run):
 
     print('\nAll packages found on mirror! Proceeding with installation...')
 
-    # 4. Download required kernel packages
-    remote_kernel_modules_filename = get_remote_kernel_modules_path(kernel_modules_filename)
-    remote_kernel_headers_filename = get_remote_kernel_headers_path(kernel_headers_filename)
+    # 4. Download required kernel packages using the discovered remote paths
+    remote_kernel_modules_filename = get_remote_kernel_modules_path(kernel_modules_filename, remote_path_modules)
+    remote_kernel_headers_filename = get_remote_kernel_headers_path(kernel_headers_filename, remote_path_headers)
     download_kernel_packages(remote_kernel_modules_filename, remote_kernel_headers_filename, dry_run)
 
     # 5. Prepare SteamOS and package manager
