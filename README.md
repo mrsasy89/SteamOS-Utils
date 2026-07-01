@@ -1,7 +1,7 @@
 # Command-line tool for automating the customization and configuration of handhelds and PCs running SteamOS
 
 > **Fork** of [InnoVision-Games/SteamOS-Utils](https://github.com/InnoVision-Games/SteamOS-Utils)  
-> **Changes**: Removal of the static whitelist of kernel versions, replaced with dynamic detection, live verification and automatic discovery of the correct Valve repo.
+> **Changes**: Removal of the static whitelist of kernel versions, replaced with dynamic detection, live verification and automatic discovery of the correct Valve repo. Adds Legion Go 2 OLED brightness slider and color correction fix.
 
 ---
 
@@ -9,7 +9,7 @@
 
 The original implementation had two issues: a **static whitelist** of supported kernel versions, and a **hardcoded mirror URL** pointing to `jupiter-main` — a repo that Valve no longer updates with recent kernels.
 
-This fork permanently resolves both issues:
+This fork permanently resolves both issues and adds new features:
 
 | Behavior | Original | This fork |
 |---|---|---|
@@ -19,6 +19,7 @@ This fork permanently resolves both issues:
 | Check package availability | No | Yes, live check on the mirror |
 | Check if already installed | No | Yes, checks `lsmod` before proceeding |
 | Error message | Generic "unsupported version" | Indicates the missing package and the reason |
+| Legion Go 2 brightness slider fix | No | Yes |
 
 ---
 
@@ -137,6 +138,53 @@ lsmod | grep acpi_call
 
 ---
 
+## Legion Go 2 — Brightness Slider and Color Correction Fix
+
+The **Lenovo Legion Go 2** has an OLED display (`AMS881KB01-0`) that on SteamOS suffers from two issues:
+- The brightness slider in Gaming Mode does not work
+- Color banding / incorrect colorimetry
+
+This fix registers the display as a known device in gamescope by writing a Lua script with the correct colorimetry profile, HDR settings and display timings.
+
+> Based on the fix described in this [Reddit post](https://www.reddit.com/r/LegionGo/comments/1s4mhlu/legion_go_2_steamos_display_fixes_color_banding/).
+
+### Enable the fix
+
+```bash
+./SteamOsUtils.py --enable_lego2_brightness_slider
+```
+
+The script will:
+
+- Create the directory `/home/deck/.config/gamescope/scripts/` if it does not exist
+- Write the Lua script `lenovo.legiongo2.oled.lua` with the correct display profile
+
+A **reboot is required** for gamescope to pick up the new script.
+
+### Remove the fix
+
+```bash
+./SteamOsUtils.py --remove_lego2_brightness_slider
+```
+
+This deletes the Lua script. Reboot to revert to the default display behaviour.
+
+### What the script registers
+
+| Parameter | Value |
+|---|---|
+| Display name | AMS881KB01-0 OLED |
+| Vendor match | SDC, product 17153 |
+| Resolution | 1920×1200 |
+| Refresh rates | 60 Hz, 144 Hz |
+| HDR | Enabled (gamma22, max 1107 nit, avg 475 nit) |
+| Red primary | x=0.6835, y=0.3154 |
+| Green primary | x=0.2402, y=0.7138 |
+| Blue primary | x=0.1396, y=0.0439 |
+| White point | x=0.3134, y=0.3291 |
+
+---
+
 ## Tested compatibility
 
 | Kernel | Valve Version | SteamOS | Status |
@@ -149,7 +197,7 @@ lsmod | grep acpi_call
 
 ## Notes
 
-- The script is designed for the **Lenovo Legion Go** on SteamOS but can work on any handheld device with the Neptune kernel.
-- After every SteamOS update, you must rerun the script because the filesystem is rewritten.
+- The script is designed for the **Lenovo Legion Go** and **Legion Go 2** on SteamOS but can work on any handheld device with the Neptune kernel.
+- After every SteamOS update, you must rerun `--enable_acpi_calls` because the filesystem is rewritten. The Legion Go 2 brightness fix (`--enable_lego2_brightness_slider`) is stored in the user home directory and **survives SteamOS updates**.
 - The kernel packages are automatically removed after installation.
 - The stable repo is detected automatically — no manual configuration needed after a SteamOS version update.
