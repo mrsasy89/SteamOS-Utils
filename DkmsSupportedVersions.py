@@ -30,6 +30,8 @@
     CHANGES: search starts from the current stable repo (detected from
     pacman mirrorlist or DB files), then other versioned repos sorted
     descending, then jupiter-main as last fallback.
+    CHANGES: support for drm-exec experimental kernel format detected
+    via regex on uname -r output.
 '''
 
 import os
@@ -52,7 +54,6 @@ def detect_current_stable_repo():
     Strategy 2: scan /var/lib/pacman/sync/ for jupiter-*.db files.
     Returns a repo name like 'jupiter-3.8.1x' or None if not detected.
     """
-    # Strategy 1: mirrorlist
     mirrorlist_path = '/etc/pacman.d/mirrorlist'
     try:
         with open(mirrorlist_path, 'r') as f:
@@ -65,7 +66,6 @@ def detect_current_stable_repo():
     except Exception:
         pass
 
-    # Strategy 2: pacman sync db files
     try:
         db_files = glob.glob('/var/lib/pacman/sync/jupiter-*.db')
         for db in db_files:
@@ -89,23 +89,17 @@ def discover_valve_repo(filename):
     """
     print('\nDiscovering Valve repos for package: %s ...' % filename)
 
-    # Detect the stable repo first
     stable_repo = detect_current_stable_repo()
 
-    # Fetch all available repos from the mirror root
     try:
         req = urllib.request.urlopen(VALVE_MIRROR_ROOT, timeout=10)
         html = req.read().decode('utf-8')
         all_repos = re.findall(r'href="(jupiter-[^/"]+)/?"', html)
-        all_repos = list(dict.fromkeys(all_repos))  # deduplicate, preserve order
+        all_repos = list(dict.fromkeys(all_repos))
     except Exception as e:
         print('  -> Error scanning mirror root: %s' % str(e))
         all_repos = []
 
-    # Build ordered search list:
-    # 1. stable repo first (if detected and present)
-    # 2. other versioned repos sorted descending (newest first), excluding main
-    # 3. jupiter-main last
     versioned = sorted(
         [r for r in all_repos if r != 'jupiter-main' and r != stable_repo],
         reverse=True
@@ -139,17 +133,71 @@ def discover_valve_repo(filename):
     return None, None
 
 def get_os_version():
-    temp = platform.release()
-    temp = temp.split('-')
+    """
+    Parses uname -r and returns a normalized os_version dict.
 
-    os_version = {
-        'os_name'              : 'linux',
-        'kernel_type'          : temp[3] if len(temp) > 3 else 'neptune',
-        'kernel_short_version' : temp[4] if len(temp) > 4 else '',
-        'kernel_long_version'  : temp[0],
-        'vendor_version'       : temp[1],
-        'sub_version'          : temp[2]
-    }
+    Supported formats:
+
+    Standard kernel:
+      6.16.12-valve24.1-1-neptune-616
+      -> kernel_long_version : 6.16.12
+         vendor_version      : valve24.1
+         sub_version         : 1
+         kernel_type         : neptune
+         kernel_short_version: 616
+         is_drm_exec         : False
+
+    DRM-exec experimental kernel:
+      6.16.12-drmexec7-valve24-1-neptune-616-drm-exec-gc61bd77b674c
+      -> kernel_long_version : 6.16.12
+         drm_variant         : drmexec7
+         vendor_version      : valve24
+         sub_version         : 1
+         kernel_type         : neptune
+         kernel_short_version: 616
+         is_drm_exec         : True
+    """
+    release = platform.release()
+    parts = release.split('-')
+
+    # Detect drm-exec format:
+    # uname -r contains 'drm-exec' segment and a drmexecN prefix
+    # Example: 6.16.12-drmexec7-valve24-1-neptune-616-drm-exec-gc61bd77b674c
+    drm_exec_match = re.match(
+        r'^(\d+\.\d+\.\d+)'       # kernel_long_version: 6.16.12
+        r'-(drmexec\d+)'            # drm_variant:         drmexec7
+        r'-(valve\d+)'              # vendor_version:      valve24
+        r'-(\d+)'                   # sub_version:         1
+        r'-(\w+)'                   # kernel_type:         neptune
+        r'-(\d+)'                   # kernel_short_version:616
+        r'-drm-exec'                # literal marker
+        r'-g[0-9a-f]+$',            # commit hash suffix
+        release
+    )
+
+    if drm_exec_match:
+        os_version = {
+            'os_name'              : 'linux',
+            'kernel_long_version'  : drm_exec_match.group(1),
+            'drm_variant'          : drm_exec_match.group(2),
+            'vendor_version'       : drm_exec_match.group(3),
+            'sub_version'          : drm_exec_match.group(4),
+            'kernel_type'          : drm_exec_match.group(5),
+            'kernel_short_version' : drm_exec_match.group(6),
+            'is_drm_exec'          : True,
+        }
+        print('\nDetected drm-exec experimental kernel.')
+    else:
+        # Standard format: 6.16.12-valve24.1-1-neptune-616
+        os_version = {
+            'os_name'              : 'linux',
+            'kernel_long_version'  : parts[0],
+            'vendor_version'       : parts[1] if len(parts) > 1 else '',
+            'sub_version'          : parts[2] if len(parts) > 2 else '',
+            'kernel_type'          : parts[3] if len(parts) > 3 else 'neptune',
+            'kernel_short_version' : parts[4] if len(parts) > 4 else '',
+            'is_drm_exec'          : False,
+        }
 
     print('\nos_version: ')
     print(os_version)
@@ -157,30 +205,72 @@ def get_os_version():
     return os_version
 
 def get_kernel_modules_filename(os_version):
+    """
+    Generates the kernel modules package filename.
+
+    Standard:  linux-neptune-616-6.16.12.valve24.1-1-x86_64.pkg.tar.zst
+    DRM-exec:  linux-neptune-616-drm-exec-6.16.12.drmexec7.valve24-1-x86_64.pkg.tar.zst
+    """
     print('\nNow generating kernel modules filename...')
-    filename = (
-        f"{os_version['os_name']}-"
-        f"{os_version['kernel_type']}-"
-        f"{os_version['kernel_short_version']}-"
-        f"{os_version['kernel_long_version']}."
-        f"{os_version['vendor_version']}-"
-        f"{os_version['sub_version']}-"
-        f"x86_64.pkg.tar.zst"
-    )
+
+    if os_version.get('is_drm_exec'):
+        filename = (
+            f"{os_version['os_name']}-"
+            f"{os_version['kernel_type']}-"
+            f"{os_version['kernel_short_version']}-"
+            f"drm-exec-"
+            f"{os_version['kernel_long_version']}."
+            f"{os_version['drm_variant']}."
+            f"{os_version['vendor_version']}-"
+            f"{os_version['sub_version']}-"
+            f"x86_64.pkg.tar.zst"
+        )
+    else:
+        filename = (
+            f"{os_version['os_name']}-"
+            f"{os_version['kernel_type']}-"
+            f"{os_version['kernel_short_version']}-"
+            f"{os_version['kernel_long_version']}."
+            f"{os_version['vendor_version']}-"
+            f"{os_version['sub_version']}-"
+            f"x86_64.pkg.tar.zst"
+        )
+
     print('Generated kernel modules filename: %s.' % filename)
     return filename
 
 def get_kernel_headers_filename(os_version):
+    """
+    Generates the kernel headers package filename.
+
+    Standard:  linux-neptune-616-headers-6.16.12.valve24.1-1-x86_64.pkg.tar.zst
+    DRM-exec:  linux-neptune-616-drm-exec-headers-6.16.12.drmexec7.valve24-1-x86_64.pkg.tar.zst
+    """
     print('\nNow generating kernel headers filename...')
-    filename = (
-        f"{os_version['os_name']}-"
-        f"{os_version['kernel_type']}-"
-        f"{os_version['kernel_short_version']}-headers-"
-        f"{os_version['kernel_long_version']}."
-        f"{os_version['vendor_version']}-"
-        f"{os_version['sub_version']}-"
-        f"x86_64.pkg.tar.zst"
-    )
+
+    if os_version.get('is_drm_exec'):
+        filename = (
+            f"{os_version['os_name']}-"
+            f"{os_version['kernel_type']}-"
+            f"{os_version['kernel_short_version']}-"
+            f"drm-exec-headers-"
+            f"{os_version['kernel_long_version']}."
+            f"{os_version['drm_variant']}."
+            f"{os_version['vendor_version']}-"
+            f"{os_version['sub_version']}-"
+            f"x86_64.pkg.tar.zst"
+        )
+    else:
+        filename = (
+            f"{os_version['os_name']}-"
+            f"{os_version['kernel_type']}-"
+            f"{os_version['kernel_short_version']}-headers-"
+            f"{os_version['kernel_long_version']}."
+            f"{os_version['vendor_version']}-"
+            f"{os_version['sub_version']}-"
+            f"x86_64.pkg.tar.zst"
+        )
+
     print('Generated kernel headers filename: %s.' % filename)
     return filename
 
